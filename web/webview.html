@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<link rel="stylesheet" href="./leaflet/dist/leaflet.css"/>
+	<script src="./leaflet/dist/leaflet.js"></script>
+	<script src="./leaflet/dist/leaflet.rotatedMarker.js"></script>
+    <meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leaflet Map Example</title>
+    <style>
+        #map {
+			position: absolute;
+            top: 0;
+			bottom: 0;
+			left: 0;
+			right: 0;
+        }
+    </style>
+</head>
+<body>
+<h2>Leaflet Map Example (Washington, DC)</h2>
+<div id="map"></div>
+<script>
+    const map = L.map('map').setView([38.7513, -77.4707], 13);
+    L.tileLayer('https://api.maptiler.com/maps/base-v4/{z}/{x}/{y}.png?key=DD9SPIwXTwsF8LxESuIL', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    const planeIcon = L.icon({
+        iconUrl: './leaflet/dist/images/planeicon.png',
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        popupAnchor: [0, -16]
+    });
+
+    let markers = {}; // hex → marker
+
+    async function refreshFlights() {
+        try {
+            const res = await fetch("http://localhost:8000/api/flights");
+            const data = await res.json();
+            const flights = data.flights || data; // handle array or {flights: [...]}
+
+            flights.forEach(f => {
+                if (!f.lat || !f.lon) return;
+
+                const key = f.hex;
+                const lat = parseFloat(f.lat);
+                const lon = parseFloat(f.lon);
+                const heading = f.heading ? parseFloat(f.heading) : 0;
+
+                if (!markers[key]) {
+                    markers[key] = L.marker([lat, lon], {
+                        icon: planeIcon,
+                        rotationAngle: heading,
+                        rotationOrigin: 'center center'
+                    }).addTo(map)
+                      .bindPopup(`${key}<br>${f.callsign || ""}`);
+                } else {
+                    markers[key].setLatLng([lat, lon]);
+                    markers[key].setRotationAngle(heading);
+                    markers[key].setPopupContent(`${key}<br>${f.callsign || ""}`);
+                }
+            });
+        } catch (err) {
+            console.error("Flight update failed:", err);
+        }
+    }
+
+    refreshFlights();           // initial load
+    setInterval(refreshFlights, 2000);
+</script>
+
+</body>
+</html>
