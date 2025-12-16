@@ -66,6 +66,20 @@ def initialize_database():
             FOREIGN KEY(flight_id) REFERENCES flights(id)
         )
     """)
+    
+    # Flight positions table (history)
+    cur.execute("""
+        CREATE TABLE flight_positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hex TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            lat REAL,
+            lon REAL,
+            alt INTEGER,
+            heading REAL,
+            gspeed REAL
+        )
+    """)
 
     conn.commit()
     conn.close()
@@ -96,23 +110,22 @@ def get_or_create_flight(conn, hexcode):
 
 def update_flight_fields(conn, flight_id, fields):
     """
-    Update flight entry with non-blank fields:
-      callsign, alt, gspeed, heading, lat, lon, grounded
+    Update flights table with non-blank fields and
+    append a position record to flight_positions when available.
     """
     cur = conn.cursor()
 
-    # Fields that may update the flights row
+    # ---- 1. Update current flight state (existing logic) ----
     update_map = {
-        "callsign": fields["callsign"],
-        "alt": fields["alt"],
-        "gspeed": fields["gspeed"],
-        "heading": fields["heading"],
-        "lat": fields["lat"],
-        "lon": fields["lon"],
-        "grounded": fields["grounded"]
+        "callsign": fields.get("callsign"),
+        "alt": fields.get("alt"),
+        "gspeed": fields.get("gspeed"),
+        "heading": fields.get("heading"),
+        "lat": fields.get("lat"),
+        "lon": fields.get("lon"),
+        "grounded": fields.get("grounded"),
     }
 
-    # Build dynamic SQL update of only non-empty fields
     updates = []
     values = []
 
@@ -125,7 +138,37 @@ def update_flight_fields(conn, flight_id, fields):
         sql = f"UPDATE flights SET {', '.join(updates)} WHERE id = ?"
         values.append(flight_id)
         cur.execute(sql, values)
-        conn.commit()
+
+    # ---- 2. Insert into flight_positions (NEW) ----
+    lat = fields.get("lat")
+    lon = fields.get("lon")
+
+    # Only store history if we have a valid position
+    if lat not in ("", None) and lon not in ("", None):
+        timestamp = f"{fields.get('date')} {fields.get('time')}"
+
+        cur.execute("""
+            INSERT INTO flight_positions (
+                hex,
+                timestamp,
+                lat,
+                lon,
+                alt,
+                heading,
+                gspeed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            fields.get("hex"),
+            timestamp,
+            lat,
+            lon,
+            fields.get("alt"),
+            fields.get("heading"),
+            fields.get("gspeed")
+        ))
+
+    conn.commit()
+
 
 
 ##############################################
