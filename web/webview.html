@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<link rel="stylesheet" href="./leaflet/dist/leaflet.css"/>
+	<script src="./leaflet/dist/leaflet.js"></script>
+	<script src="./leaflet/dist/leaflet.rotatedMarker.js"></script>
+    <meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TCOM-500 ADSB Aircraft Tracker</title>
+    <style>
+        #map {
+			position: absolute;
+            top: 0;
+			bottom: 0;
+			left: 0;
+			right: 0;
+        }
+    </style>
+</head>
+<body>
+<div id="searchbox" style="position:absolute; top: 10px; right: 10px; z-index:1000; background:white; padding:6px;">
+	<input id="icaoInput" placeholder="Search ICAO (hex)" maxlength="6" oninput="this.value=this.value.toUpperCase()">
+    <button onclick="searchFlight()">Search</button>
+</div>
+<div id="buttons" style="position:absolute; top: 50px; right: 10px; z-index:999; background:white; padding:6px;">
+    <button onclick="clearAllTracks()">Clear All Tracks</button>
+</div>
+<div id="map"></div>
+<script>
+    const map = L.map('map').setView([38.8460, -77.3053], 10);
+    L.tileLayer('https://api.maptiler.com/maps/dataviz-v4/256/{z}/{x}/{y}.png?key=DD9SPIwXTwsF8LxESuIL', {
+        maxZoom: 15,
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+	const planeIconActive = L.icon({
+		iconUrl: './leaflet/dist/images/PlaneIconActive.png',
+		iconSize: [32, 32],
+		iconAnchor: [16, 16],
+	});
+
+	const planeIconStale = L.icon({
+		iconUrl: './leaflet/dist/images/PlaneIconStale.png',
+		iconSize: [32, 32],
+		iconAnchor: [16, 16],
+	});
+
+    let markers = {};
+	let tracks = {};
+	let lastTrackFetch = {};
+	let lastUpdate = {};
+	let elapsed = {};
+
+	async function refreshFlights() {
+		try {
+			const res = await fetch("http://localhost:8000/api/flights");
+			const data = await res.json();
+			const flights = data.flights || data;
+
+			flights.forEach(f => {
+				if (!f.lat || !f.lon) return;
+				const now = Date.now();
+				const key = f.hex;
+				const lat = parseFloat(f.lat);
+				const lon = parseFloat(f.lon);
+				lastUpdate[key] = f.timestamp;
+				elapsed[key] = now - lastUpdate[key];
+				if (elapsed[key] > 21000) return;
+				const heading = f.heading ? parseFloat(f.heading) : 0;
+				if (!markers[key]) { // no marker for the plane currently exists
+					markers[key] = L.marker([lat, lon], {
+						icon: planeIconActive,
+						rotationAngle: heading,
+						rotationOrigin: 'center center'
+					})
+					.addTo(map)
+					.bindPopup(`${key}<br>${f.callsign || ""}`)
+					.on("click", () => {
+						if (tracks[key]) {
+							map.removeLayer(tracks[key]);
+							delete tracks[key];
+						} else {
+							drawTrack(key);
+						}
+					});
+				} else { // marker exists
+					markers[key].setLatLng([lat, lon]);
+					markers[key].setRotationAngle(heading);
+					markers[key].setPopupContent(`${key}<br>${f.callsign || ""}`);
+				}
+			});
+		} catch (err) {
+			console.error("Flight update failed:", err);
+		}
+	}
+
+	async function searchFlight() {
+		const hex = document.getElementById("icaoInput").value.trim();
+		if (!hex) return;
+
+		try {
+			const res = await fetch(`http://localhost:8000/api/flights/${hex}`);
+			const data = await res.json();
+
+			if (!data.found) {
+				alert("Flight not found");
+				return;
+			}
+
+			const f = data.flight;
+			if (!f.lat || !f.lon) {
+				alert("Flight has no position yet");
+				return;
+			}
+
+			const lat = parseFloat(f.lat);
+			const lon = parseFloat(f.lon);
+
+			// Zoom & center
+			map.setView([lat, lon], 14, { animate: true });
+
+			// Ensure marker exists
+			if (markers[f.hex]) {
+				markers[f.hex].openPopup();
+				highlightMarker(markers[f.hex]);
+			}
+
+		} catch (err) {
+			console.error("Search failed:", err);
+		}
+	}
+
+	function highlightMarker(marker) {
+		marker.setZIndexOffset(1000);
+		setTimeout(() => marker.setZIndexOffset(0), 5000);
+	}
+	
+	function clearTrack(hex) {
+		if (tracks[hex]) {
+			map.removeLayer(tracks[hex]);
+			delete tracks[hex];
+		}
+	}
+
+	function clearAllTracks() {
+		Object.values(tracks).forEach(t => map.removeLayer(t));
+		tracks = {};
+	}
+
+	async function drawTrack(hex) {
+		try {
+			const res = await fetch(`http://localhost:8000/api/track/${hex}`);
+			const points = await res.json();
+
+			const latlngs = points
+				.filter(p => p.lat && p.lon)
+				.map(p => [p.lat, p.lon]);
+
+			if (latlngs.length === 0) return;
+
+			if (!tracks[hex]) {
+				tracks[hex] = L.polyline(latlngs, {
+					color: 'gold',
+					weight: 3
+				}).addTo(map);
+			} else {
+				tracks[hex].setLatLngs(latlngs);
+			}
+		} catch (err) {
+			console.error("Track update failed:", err);
+		}
+	}
+
+	// async function replayTrack(hex) {
+	// 	const res = await fetch(`/api/track/${hex}?limit=600`);
+	// 	const points = await res.json();
+
+	// 	let i = 0;
+	// 	const marker = markers[hex];
+
+	// 	const interval = setInterval(() => {
+	// 		if (i >= points.length) {
+	// 			clearInterval(interval);
+	// 			return;
+	// 		}
+	// 		marker.setLatLng([points[i].lat, points[i].lon]);
+	// 		marker.setRotationAngle(points[i].heading || 0);
+	// 		i++;
+	// 	}, 500); // replay speed
+	// }
+
+    refreshFlights(); // Initial flights load
+    setInterval(refreshFlights, 5000);
+	setInterval(() => {Object.keys(tracks).forEach(hex => {drawTrack(hex);});}, 5000);
+	setInterval(() => {  // check stale flights, after 30 seconds gray, after 60 remove
+		Object.keys(markers).forEach(key => {
+			if (!lastUpdate[key]) return;
+			console.log("Time since last message for ", key, ": ", elapsed[key]);
+			if (elapsed[key] > 30000) { // 30 sec
+				console.log(key, " has timed out!")
+				map.removeLayer(markers[key]); // Remove marker
+				delete markers[key]; // Delete marker
+				if (tracks[key]) { // Remove track if it exists
+					map.removeLayer(tracks[key]);
+					delete tracks[key];
+				}
+			} else if (elapsed[key] > 21000) { // 21 sec
+				markers[key].setIcon(planeIconStale);
+			} else {
+				markers[key].setIcon(planeIconActive);
+			}
+		});
+	}, 2500);
+
+
+    document.getElementById("icaoInput").addEventListener("keypress", e => {
+        if (e.key === "Enter") {
+            searchFlight();
+        }
+    });
+	
+</script>
+
+</body>
+</html>
