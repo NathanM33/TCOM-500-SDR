@@ -22,24 +22,38 @@
 	<input id="icaoInput" placeholder="Search ICAO (hex)" maxlength="6" oninput="this.value=this.value.toUpperCase()">
     <button onclick="searchFlight()">Search</button>
 </div>
-<div id="buttons" style="position:absolute; top: 50px; right: 10px; z-index:999; background:white; padding:6px;">
+<div id="buttons" style="position:absolute; top: 10px; right: 260px; z-index:999; background:white; padding:6px;">
     <button onclick="clearAllTracks()">Clear All Tracks</button>
+</div>
+<div id="flightInfo" style="
+    position:absolute;
+    top:50px;
+    right:10px;
+    z-index:1000;
+    background:white;
+    padding:8px;
+    border-radius:6px;
+    min-width:220px;
+    font-family:monospace;
+    font-size:13px;
+">
+    <b>Selected Flight</b><br>
+    <span id="fi-hex">HEX: —</span><br>
+    <span id="fi-callsign">Callsign: —</span><br>
+    <span id="fi-alt">Altitude: —</span><br>
+    <span id="fi-gspeed">Ground Speed: —</span><br>
+    <span id="fi-heading">Heading: —</span><br>
+    <span id="fi-lat">Lat: —</span><br>
+    <span id="fi-lon">Lon: —</span><br>
+    <span id="fi-grounded">Grounded: —</span>
 </div>
 <div id="map"></div>
 <script>
-    const map = L.map('map').setView([38.7513, -77.4707], 13);
+    const map = L.map('map').setView([38.8460, -77.3053], 10);
     L.tileLayer('https://api.maptiler.com/maps/dataviz-v4/256/{z}/{x}/{y}.png?key=DD9SPIwXTwsF8LxESuIL', {
-        maxZoom: 19,
+        maxZoom: 15,
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
-	
-/*
-	Alternative map backdrop, too saturated with color and details
-    L.tileLayer('https://api.maptiler.com/maps/base-v4/{z}/{x}/{y}.png?key=DD9SPIwXTwsF8LxESuIL', {
-        maxZoom: 19,
-        attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
-*/
 
 	const planeIconActive = L.icon({
 		iconUrl: './leaflet/dist/images/PlaneIconActive.png',
@@ -53,10 +67,10 @@
 		iconAnchor: [16, 16],
 	});
 
-    let markers = {}; // hex → marker
-	let tracks = {}; // hex → polyline
-	let lastTrackFetch = {}; // hex → timestamp
-	let lastUpdate = {}; // hex → timestamp (ms)
+    let markers = {};
+	let tracks = {};
+	let lastTrackFetch = {};
+	let selectedHex = null;
 
 	async function refreshFlights() {
 		try {
@@ -66,13 +80,12 @@
 
 			flights.forEach(f => {
 				if (!f.lat || !f.lon) return;
-
+				const now = Date.now();
 				const key = f.hex;
 				const lat = parseFloat(f.lat);
 				const lon = parseFloat(f.lon);
 				const heading = f.heading ? parseFloat(f.heading) : 0;
-
-				if (!markers[key]) {
+				if (!markers[key]) { // no marker for the plane currently exists
 					markers[key] = L.marker([lat, lon], {
 						icon: planeIconActive,
 						rotationAngle: heading,
@@ -81,6 +94,7 @@
 					.addTo(map)
 					.bindPopup(`${key}<br>${f.callsign || ""}`)
 					.on("click", () => {
+    					selectFlight(f);
 						if (tracks[key]) {
 							map.removeLayer(tracks[key]);
 							delete tracks[key];
@@ -88,18 +102,64 @@
 							drawTrack(key);
 						}
 					});
-				} else {
+				} else { // marker exists
 					markers[key].setLatLng([lat, lon]);
 					markers[key].setRotationAngle(heading);
 					markers[key].setPopupContent(`${key}<br>${f.callsign || ""}`);
+					if (selectedHex === f.hex) {
+						updateFlightInfo(f);
+					}
 				}
-
-				// Update last seen time **only when position is valid**
-				lastUpdate[key] = Date.now();
 			});
 		} catch (err) {
 			console.error("Flight update failed:", err);
 		}
+	}
+
+	function selectFlight(f) {
+		selectedHex = f.hex;
+
+		updateFlightInfo(f);
+
+		// Visual highlight
+		markers[f.hex].setZIndexOffset(1000);
+
+		// Reset others
+		Object.keys(markers).forEach(h => {
+			if (h !== f.hex) {
+				markers[h].setZIndexOffset(0);
+			}
+		});
+	}
+
+	function updateFlightInfo(f) {
+		document.getElementById("fi-hex").textContent =
+			`HEX: ${f.hex || "—"}`;
+		document.getElementById("fi-callsign").textContent =
+			`Callsign: ${f.callsign || "—"}`;
+		document.getElementById("fi-alt").textContent =
+			`Altitude: ${f.alt || "—"}`;
+		document.getElementById("fi-gspeed").textContent =
+			`Ground Speed: ${f.gspeed || "—"}`;
+		document.getElementById("fi-heading").textContent =
+			`Heading: ${f.heading || "—"}`;
+		document.getElementById("fi-lat").textContent =
+			`Lat: ${f.lat || "—"}`;
+		document.getElementById("fi-lon").textContent =
+			`Lon: ${f.lon || "—"}`;
+		document.getElementById("fi-grounded").textContent =
+			`Grounded: ${f.grounded || "—"}`;
+	}
+
+	function clearFlightInfo() {
+		document.getElementById("fi-hex").textContent = "HEX: —";
+		document.getElementById("fi-callsign").textContent = "Callsign: —";
+		document.getElementById("fi-alt").textContent = "Altitude: —";
+		document.getElementById("fi-gspeed").textContent = "Ground Speed: —";
+		document.getElementById("fi-heading").textContent = "Heading: —";
+		document.getElementById("fi-lat").textContent = "Lat: —";
+		document.getElementById("fi-lon").textContent = "Lon: —";
+		document.getElementById("fi-grounded").textContent = "Grounded: —";
 	}
 
 	async function searchFlight() {
@@ -179,63 +239,9 @@
 		}
 	}
 
-	async function replayTrack(hex) {
-		const res = await fetch(`/api/track/${hex}?limit=600`);
-		const points = await res.json();
-
-		let i = 0;
-		const marker = markers[hex];
-
-		const interval = setInterval(() => {
-			if (i >= points.length) {
-				clearInterval(interval);
-				return;
-			}
-
-			marker.setLatLng([points[i].lat, points[i].lon]);
-			marker.setRotationAngle(points[i].heading || 0);
-			i++;
-		}, 500); // replay speed
-	}
-
-    refreshFlights();           // initial load
-    setInterval(refreshFlights, 2000);
-	setInterval(() => {Object.keys(tracks).forEach(hex => {drawTrack(hex);});}, 2000);
-	setInterval(() => {
-		const now = Date.now();
-		Object.keys(markers).forEach(key => {
-			if (!lastUpdate[key]) return;
-
-			const isStale = now - lastUpdate[key] > 20000; // 20 sec
-			// Directly set the icon without equality check
-			markers[key].setIcon(isStale ? planeIconStale : planeIconActive);
-		});
-	}, 1000);
-	setInterval(() => {
-		const now = Date.now();
-
-		Object.keys(markers).forEach(key => {
-			if (!lastUpdate[key]) return;
-
-			const elapsed = now - lastUpdate[key];
-
-			if (elapsed > 60 * 1000) { // 60 seconds
-				// Remove marker
-				map.removeLayer(markers[key]);
-				delete markers[key];
-
-				// Remove track if it exists
-				if (tracks[key]) {
-					map.removeLayer(tracks[key]);
-					delete tracks[key];
-				}
-
-				// Remove lastUpdate entry
-				delete lastUpdate[key];
-			}
-		});
-	}, 1000); // check every second
-
+    refreshFlights(); // Initial flights load
+    setInterval(refreshFlights, 5000);
+	setInterval(() => {Object.keys(tracks).forEach(hex => {drawTrack(hex);});}, 5000);
 
     document.getElementById("icaoInput").addEventListener("keypress", e => {
         if (e.key === "Enter") {

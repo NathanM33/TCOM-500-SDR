@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 
 # Path to your SQLite database
-DB_PATH = "./data/raw/flightsdata.db"
+DB_PATH = "./data/flightsdata.db"
 
 # Create FastAPI app
 app = FastAPI()
