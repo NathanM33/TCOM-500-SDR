@@ -22,8 +22,30 @@
 	<input id="icaoInput" placeholder="Search ICAO (hex)" maxlength="6" oninput="this.value=this.value.toUpperCase()">
     <button onclick="searchFlight()">Search</button>
 </div>
-<div id="buttons" style="position:absolute; top: 50px; right: 10px; z-index:999; background:white; padding:6px;">
+<div id="buttons" style="position:absolute; top: 10px; right: 260px; z-index:999; background:white; padding:6px;">
     <button onclick="clearAllTracks()">Clear All Tracks</button>
+</div>
+<div id="flightInfo" style="
+    position:absolute;
+    top:50px;
+    right:10px;
+    z-index:1000;
+    background:white;
+    padding:8px;
+    border-radius:6px;
+    min-width:220px;
+    font-family:monospace;
+    font-size:13px;
+">
+    <b>Selected Flight</b><br>
+    <span id="fi-hex">HEX: —</span><br>
+    <span id="fi-callsign">Callsign: —</span><br>
+    <span id="fi-alt">Altitude: —</span><br>
+    <span id="fi-gspeed">Ground Speed: —</span><br>
+    <span id="fi-heading">Heading: —</span><br>
+    <span id="fi-lat">Lat: —</span><br>
+    <span id="fi-lon">Lon: —</span><br>
+    <span id="fi-grounded">Grounded: —</span>
 </div>
 <div id="map"></div>
 <script>
@@ -48,8 +70,7 @@
     let markers = {};
 	let tracks = {};
 	let lastTrackFetch = {};
-	let lastUpdate = {};
-	let elapsed = {};
+	let selectedHex = null;
 
 	async function refreshFlights() {
 		try {
@@ -63,9 +84,6 @@
 				const key = f.hex;
 				const lat = parseFloat(f.lat);
 				const lon = parseFloat(f.lon);
-				lastUpdate[key] = f.timestamp;
-				elapsed[key] = now - lastUpdate[key];
-				if (elapsed[key] > 21000) return;
 				const heading = f.heading ? parseFloat(f.heading) : 0;
 				if (!markers[key]) { // no marker for the plane currently exists
 					markers[key] = L.marker([lat, lon], {
@@ -76,6 +94,7 @@
 					.addTo(map)
 					.bindPopup(`${key}<br>${f.callsign || ""}`)
 					.on("click", () => {
+    					selectFlight(f);
 						if (tracks[key]) {
 							map.removeLayer(tracks[key]);
 							delete tracks[key];
@@ -87,11 +106,60 @@
 					markers[key].setLatLng([lat, lon]);
 					markers[key].setRotationAngle(heading);
 					markers[key].setPopupContent(`${key}<br>${f.callsign || ""}`);
+					if (selectedHex === f.hex) {
+						updateFlightInfo(f);
+					}
 				}
 			});
 		} catch (err) {
 			console.error("Flight update failed:", err);
 		}
+	}
+
+	function selectFlight(f) {
+		selectedHex = f.hex;
+
+		updateFlightInfo(f);
+
+		// Visual highlight
+		markers[f.hex].setZIndexOffset(1000);
+
+		// Reset others
+		Object.keys(markers).forEach(h => {
+			if (h !== f.hex) {
+				markers[h].setZIndexOffset(0);
+			}
+		});
+	}
+
+	function updateFlightInfo(f) {
+		document.getElementById("fi-hex").textContent =
+			`HEX: ${f.hex || "—"}`;
+		document.getElementById("fi-callsign").textContent =
+			`Callsign: ${f.callsign || "—"}`;
+		document.getElementById("fi-alt").textContent =
+			`Altitude: ${f.alt || "—"}`;
+		document.getElementById("fi-gspeed").textContent =
+			`Ground Speed: ${f.gspeed || "—"}`;
+		document.getElementById("fi-heading").textContent =
+			`Heading: ${f.heading || "—"}`;
+		document.getElementById("fi-lat").textContent =
+			`Lat: ${f.lat || "—"}`;
+		document.getElementById("fi-lon").textContent =
+			`Lon: ${f.lon || "—"}`;
+		document.getElementById("fi-grounded").textContent =
+			`Grounded: ${f.grounded || "—"}`;
+	}
+
+	function clearFlightInfo() {
+		document.getElementById("fi-hex").textContent = "HEX: —";
+		document.getElementById("fi-callsign").textContent = "Callsign: —";
+		document.getElementById("fi-alt").textContent = "Altitude: —";
+		document.getElementById("fi-gspeed").textContent = "Ground Speed: —";
+		document.getElementById("fi-heading").textContent = "Heading: —";
+		document.getElementById("fi-lat").textContent = "Lat: —";
+		document.getElementById("fi-lon").textContent = "Lon: —";
+		document.getElementById("fi-grounded").textContent = "Grounded: —";
 	}
 
 	async function searchFlight() {
@@ -171,47 +239,9 @@
 		}
 	}
 
-	// async function replayTrack(hex) {
-	// 	const res = await fetch(`/api/track/${hex}?limit=600`);
-	// 	const points = await res.json();
-
-	// 	let i = 0;
-	// 	const marker = markers[hex];
-
-	// 	const interval = setInterval(() => {
-	// 		if (i >= points.length) {
-	// 			clearInterval(interval);
-	// 			return;
-	// 		}
-	// 		marker.setLatLng([points[i].lat, points[i].lon]);
-	// 		marker.setRotationAngle(points[i].heading || 0);
-	// 		i++;
-	// 	}, 500); // replay speed
-	// }
-
     refreshFlights(); // Initial flights load
     setInterval(refreshFlights, 5000);
 	setInterval(() => {Object.keys(tracks).forEach(hex => {drawTrack(hex);});}, 5000);
-	setInterval(() => {  // check stale flights, after 30 seconds gray, after 60 remove
-		Object.keys(markers).forEach(key => {
-			if (!lastUpdate[key]) return;
-			console.log("Time since last message for ", key, ": ", elapsed[key]);
-			if (elapsed[key] > 30000) { // 30 sec
-				console.log(key, " has timed out!")
-				map.removeLayer(markers[key]); // Remove marker
-				delete markers[key]; // Delete marker
-				if (tracks[key]) { // Remove track if it exists
-					map.removeLayer(tracks[key]);
-					delete tracks[key];
-				}
-			} else if (elapsed[key] > 21000) { // 21 sec
-				markers[key].setIcon(planeIconStale);
-			} else {
-				markers[key].setIcon(planeIconActive);
-			}
-		});
-	}, 2500);
-
 
     document.getElementById("icaoInput").addEventListener("keypress", e => {
         if (e.key === "Enter") {

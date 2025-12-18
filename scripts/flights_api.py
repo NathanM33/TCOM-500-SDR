@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 
 # Path to your SQLite database
-DB_PATH = "./data/raw/flightsdata.db"
+DB_PATH = "./data/flightsdata.db"
 
 # Create FastAPI app
 app = FastAPI()
@@ -21,7 +21,7 @@ def flights():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("""
-        SELECT hex, timestamp, callsign, alt, gspeed, heading, lat, lon, grounded
+        SELECT hex, callsign, alt, gspeed, heading, lat, lon, grounded
         FROM flights
         WHERE lat IS NOT NULL AND lon IS NOT NULL
     """)
@@ -31,14 +31,13 @@ def flights():
     return [
         {
             "hex": r[0],
-            "timestamp": r[1],
-            "callsign": r[2],
-            "alt": r[3],
-            "gspeed": r[4],
-            "heading": r[5],
-            "lat": float(r[6]) if r[6] else None,
-            "lon": float(r[7]) if r[7] else None,
-            "grounded": r[8]
+            "callsign": r[1],
+            "alt": r[2],
+            "gspeed": r[3],
+            "heading": r[4],
+            "lat": float(r[5]) if r[5] else None,
+            "lon": float(r[6]) if r[6] else None,
+            "grounded": r[7]
         } for r in rows
     ]
     
@@ -51,7 +50,6 @@ def get_flight_by_hex(hex: str):
     cur.execute("""
         SELECT
             hex,
-            timestamp,
             callsign,
             lat,
             lon,
